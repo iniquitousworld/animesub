@@ -20,7 +20,7 @@ classifiers = [
 dependencies = [
     "demucs[cu126]>=4.0.1",
     "faster-whisper",
-    "punctuators==0.0.7",
+    "punctuators==0.0.5",
     "silero-vad",
     "torchaudio",
     "torch",
