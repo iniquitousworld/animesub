@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "animesub"
+version = "0.2.0"
+authors = [
+  { name="Ivan Tyumentsev", email="ivanfufa184@gmail.com" },
+]
+description = "Инструмент для автоматического создания субтитров для аниме"
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+dependencies = [
+    "demucs==4.0.1",
+    "openai-whisper==20250625", 
+    "onnxruntime==1.22.1",
+    "punctuators==0.0.7",
+    "silero-vad==5.1.2",
+    "torchaudio>=2.8.0,<=2.8.1",  
+    "torch>=2.8.0,<=2.8.1",
+    "torchvision==0.23.0"
+]
+
+[tool.setuptools.package-data]
+"AnimeSub" = ["*.py"]
+
+[tool.setuptools]
+packages = ["AnimeSub"]
+
+[project.scripts]
+animesub = "AnimeSub.main_logic:main"
