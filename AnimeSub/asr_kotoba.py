@@ -1,6 +1,5 @@
 import logging
 import torch
-import torchaudio
 from pathlib import Path
 from typing import List, Dict, Union
 from transformers import pipeline

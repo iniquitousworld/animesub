@@ -1,6 +1,5 @@
 import torch
 import torchaudio
-from omegaconf import OmegaConf
 
 # Загрузка модели silero-vad
 model, utils = torch.hub.load(

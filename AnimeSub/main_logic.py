@@ -5,7 +5,7 @@ import shutil
 import torch
 import logging
 import sys
-from typing import List, Dict, Tuple
+from typing import List, Dict
 
 from .asr_whisper import transcribe_segments  # Для других моделей
 from .asr_kotoba import transcribe_segments as transcribe_kotoba  # Специфично для kotoba
@@ -35,7 +35,6 @@ def process_audio(input_path: str, output_path: str, model_name: str, device: st
     Полный конвейер обработки аудиофайла для генерации субтитров с выбором ASR движка.
     """
     logging.info("--- Запуск процесса создания субтитров ---")
-    logging.info(f"Текущее время: 07:52 AM JST, 08 августа 2025 года")
 
     with tempfile.TemporaryDirectory() as temp_dir:
         logging.info(f"Создана временная директория: {temp_dir}")
