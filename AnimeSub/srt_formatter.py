@@ -4,67 +4,55 @@ from typing import List, Dict
 
 def _format_srt_time(seconds: float) -> str:
     """
-    Форматирует время из секунд в формат SRT: ЧЧ:ММ:СС,ммм.
-    
-    Args:
-        seconds (float): Время в секундах.
-        
-    Returns:
-        str: Отформатированная строка времени.
+    Форматирует время в секундах в формат SRT (HH:MM:SS,MMM).
     """
     delta = datetime.timedelta(seconds=seconds)
-
     hours, remainder = divmod(delta.seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
     milliseconds = delta.microseconds // 1000
-    
     return f"{hours:02}:{minutes:02}:{seconds:02},{milliseconds:03}"
 
 def _clean_text(text: str) -> str:
     """
-    Очищает текст от повторяющихся знаков препинания,
-    включая английские и японские.
-    Например, '.. ' -> '. ', '。 。' -> '。', '!!' -> '!', '、、' -> '、'.
-
-    Args:
-        text (str): Исходный текст.
-
-    Returns:
-        str: Очищенный текст.
+    Очищает текст субтитров, удаляя нежелательные западные знаки препинания
+    и дублирующиеся японские знаки, сохраняя только '、' и '。' для японского текста.
     """
-    # Регулярное выражение для поиска повторяющихся знаков.
-    # Ищет повторяющиеся символы: . ! ? 。 、 ー ,
-    cleaned_text = re.sub(r'([.!?。、ー,])\1+', r'\1', text)
+    # Удаляем дублирующиеся знаки препинания (например, 、、 или 。。)
+    cleaned_text = re.sub(r'([、。])\1+', r'\1', text)
 
-    # Убираем лишние пробелы, которые могли появиться
-    cleaned_text = re.sub(r'\s+', ' ', cleaned_text).strip()
+    # Удаляем западные знаки препинания (., !, ?, ,, ; и т.д.), сохраняя японские
+    cleaned_text = re.sub(r'[.,!?;]', '', cleaned_text)
+
+    # Удаляем лишние пробелы (для японского текста пробелы обычно не нужны)
+    cleaned_text = re.sub(r'\s+', '', cleaned_text).strip()
 
     return cleaned_text
 
 def segments_to_srt(segments: List[Dict]) -> str:
     """
-    Преобразует список сегментов в одну строку в формате SRT.
+    Преобразует список сегментов с текстом и временными метками в строку формата SRT.
 
     Args:
-        segments (List[Dict]): Список словарей, где каждый словарь
-                               содержит ключи 'start', 'end' и 'text'.
+        segments (List[Dict]): Список словарей с ключами 'start', 'end', 'text'.
 
     Returns:
-        str: Содержимое SRT-файла в виде строки.
+        str: Строка в формате SRT.
     """
     srt_blocks = []
-
-    for i, segment in enumerate(segments, start=1):
-        if not segment.get('text', '').strip():
+    for i, segment in enumerate(segments):
+        text = segment.get('text', '')
+        if not text:
             continue
-            
+
+        # Очищаем текст
+        cleaned_text = _clean_text(text)
+        if not cleaned_text:
+            continue
+
         start_time = _format_srt_time(segment['start'])
         end_time = _format_srt_time(segment['end'])
-        
-        # Очищаем текст перед его использованием
-        text = _clean_text(segment['text'])
-        
-        block = f"{i}\n{start_time} --> {end_time}\n{text}\n"
+
+        block = f"{i + 1}\n{start_time} --> {end_time}\n{cleaned_text}\n"
         srt_blocks.append(block)
-        
+
     return "\n".join(srt_blocks)

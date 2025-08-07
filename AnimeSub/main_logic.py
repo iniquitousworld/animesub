@@ -5,20 +5,18 @@ import shutil
 import torch
 import logging
 import sys
-from typing import List, Dict
+from typing import List, Dict, Tuple
 
-from .asr_whisper import transcribe_segments
+from .asr_whisper import transcribe_segments  # Для других моделей
+from .asr_kotoba import transcribe_segments as transcribe_kotoba  # Специфично для kotoba
 from .separator import separate_vocals
 from .vad_detector import detect_speech_segments
 from .punctuator import add_punctuation_with_xlm
 from .srt_formatter import segments_to_srt
 
-
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-def merge_close_segments(
-    timestamps: List[Dict], max_silence_s: float = 0.4
-) -> List[Dict]:
+def merge_close_segments(timestamps: List[Dict], max_silence_s: float = 0.6) -> List[Dict]:
     if not timestamps:
         return []
     merged_timestamps = []
@@ -35,14 +33,9 @@ def merge_close_segments(
 def process_audio(input_path: str, output_path: str, model_name: str, device: str):
     """
     Полный конвейер обработки аудиофайла для генерации субтитров с выбором ASR движка.
-
-    Args:
-        input_path (str): Путь к исходному аудио/видео файлу.
-        output_path (str): Путь для сохранения итогового .srt файла.
-        model_name (str): Имя модели для выбранного движка.
-        device (str): Устройство для выполнения ('cuda' или 'cpu').
     """
     logging.info("--- Запуск процесса создания субтитров ---")
+    logging.info(f"Текущее время: 07:52 AM JST, 08 августа 2025 года")
 
     with tempfile.TemporaryDirectory() as temp_dir:
         logging.info(f"Создана временная директория: {temp_dir}")
@@ -57,23 +50,36 @@ def process_audio(input_path: str, output_path: str, model_name: str, device: st
 
         # --- Шаг 2: Детекция речи (VAD) ---
         logging.info("[2/5] Обнаружение сегментов речи...")
-        speech_timestamps = detect_speech_segments(vocals_path)
+        speech_timestamps, waveform, sample_rate = detect_speech_segments(vocals_path)
         if not speech_timestamps:
             logging.critical("Речь не обнаружена. Процесс прерван.")
             return
-        logging.info(f"Обнаружено {len(speech_timestamps)} сегментов речи.")
-
-        speech_timestamps = merge_close_segments(speech_timestamps)
-        logging.info(f"После объединения осталось {len(speech_timestamps)} сегментов.")
+        logging.info(f"Обнаружено {len(speech_timestamps)} больших сегментов речи.")
 
         # --- Шаг 3: Транскрибация речи (ASR) ---
         logging.info("[3/5] Транскрибация сегментов...")
-        transcribed_segments = transcribe_segments(
-            audio_path=vocals_path,
-            speech_timestamps=speech_timestamps,
-            model_name=model_name, 
-            device=device
-        )
+        if model_name.lower() == ("kotoba-whisper-v2.2"):
+            transcribed_segments = transcribe_kotoba(
+                audio_path=vocals_path,
+                speech_timestamps=speech_timestamps,
+                waveform=waveform,
+                sample_rate=sample_rate,
+                model_name=model_name,
+                device=device
+            )
+        else:
+            transcribed_segments = transcribe_segments(
+                audio_path=vocals_path,
+                speech_timestamps=speech_timestamps,
+                waveform=waveform,
+                sample_rate=sample_rate,
+                model_name=model_name,
+                device=device
+            )
+
+        if not transcribed_segments:
+            logging.critical("Транскрипция не удалась. Процесс прерван.")
+            return
         logging.info("Транскрибация завершена.")
 
         # --- Шаг 4: Добавление пунктуации ---
@@ -81,7 +87,7 @@ def process_audio(input_path: str, output_path: str, model_name: str, device: st
         texts_to_punctuate = [seg['text'] for seg in transcribed_segments if seg['text']]
         if texts_to_punctuate:
             punctuated_lists = add_punctuation_with_xlm(texts_to_punctuate)
-            punctuated_texts = [" ".join(sentences) for sentences in punctuated_lists]
+            punctuated_texts = ["".join(sentences) for sentences in punctuated_lists]  # Без пробелов для японского
             text_iterator = iter(punctuated_texts)
             for segment in transcribed_segments:
                 if segment['text']:
@@ -104,7 +110,6 @@ def process_audio(input_path: str, output_path: str, model_name: str, device: st
             logging.critical(f"Ошибка при записи в файл '{output_path}': {e}")
     logging.info("Временные файлы очищены.")
 
-
 def main():
     """
     Главная функция для запуска из командной строки.
@@ -126,8 +131,8 @@ def main():
     parser.add_argument(
         "-m", "--model",
         type=str,
-        default="small",
-        help="Имя модели для выбранного движка (по умолчанию: 'small' для Whisper)."
+        default="kotoba-whisper-v2.2",
+        help="Имя модели для выбранного движка (по умолчанию: 'kotoba-whisper-v2.2')."
     )
     parser.add_argument(
         "-d", "--device",
@@ -146,7 +151,6 @@ def main():
         logging.critical(f"Ошибка: Входной файл не найден по пути: {args.input_file}")
         return
 
-    # Выбор устройства
     if args.device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
         logging.warning(f"Устройство не указано, используется автоопределение: {device.upper()}")
@@ -156,7 +160,6 @@ def main():
             logging.error("Ошибка: Выбрано устройство 'cuda', но оно недоступно. Используется 'cpu'.")
             device = "cpu"
 
-    # Определяем путь для выходного файла
     if args.output:
         output_file_path = args.output
     else:
@@ -166,7 +169,6 @@ def main():
     process_audio(args.input_file, output_file_path, args.model, device)
 
 if __name__ == '__main__':
-    # Добавляем, чтобы main_logic.py работал как пакет
     current_dir = os.path.dirname(os.path.abspath(__file__))
     sys.path.append(current_dir)
     main()
