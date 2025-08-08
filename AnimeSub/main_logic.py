@@ -33,7 +33,7 @@ def merge_close_segments(timestamps: List[Dict], max_silence_s: float = 0.6) -> 
     logging.debug(f"Объединено {len(merged_timestamps)} сегментов")
     return merged_timestamps
 
-def process_audio(input_path: str, output_path: str, model_name: str, device: str, demucs_model: str = "htdemucs"):
+def process_audio(input_path: str, output_path: str, model_name: str, device: str, demucs_model: str = "htdemucs", merge_silence: float = 0.6):
     logging.info("--- Запуск процесса создания субтитров ---")
     logging.info(f"Входной файл: {input_path}, Выходной файл: {output_path}, Модель: {model_name}, Устройство: {device}")
 
@@ -60,6 +60,8 @@ def process_audio(input_path: str, output_path: str, model_name: str, device: st
         logging.info("[3/5] Транскрипция сегментов...")
         try:
             if model_name.lower() in ("kotoba-whisper", "kotoba-whisper-v2.2"):
+                speech_timestamps = merge_close_segments(speech_timestamps, max_silence_s=merge_silence)
+                logging.info(f"После объединения (max_silence_s={merge_silence:.2f}): {len(speech_timestamps)} сегментов речи")
                 transcribed_segments = transcribe_kotoba(
                     audio_path=vocals_path,
                     speech_timestamps=speech_timestamps,
@@ -158,6 +160,12 @@ def main():
         choices=['htdemucs', 'mdx_extra_q'],
         help="Модель Demucs для отделения вокала (по умолчанию: 'htdemucs')."
     )
+    parser.add_argument(
+    "--merge-silence",
+    type=float,
+    default=0.6,
+    help="Максимальная пауза между сегментами для объединения (только для kotoba-моделей). По умолчанию: 0.6 секунд."
+    )
     args = parser.parse_args()
 
     if not shutil.which("ffmpeg"):
@@ -183,7 +191,14 @@ def main():
         base_name = os.path.splitext(os.path.basename(args.input_file))[0]
         output_file_path = f"{base_name}.srt"
         
-    process_audio(args.input_file, output_file_path, args.model, device, demucs_model=args.demucs_model)
+    process_audio(
+    args.input_file,
+    output_file_path,
+    args.model,
+    device,
+    demucs_model=args.demucs_model,
+    merge_silence=args.merge_silence
+    )
 
 if __name__ == '__main__':
     current_dir = os.path.dirname(os.path.abspath(__file__))

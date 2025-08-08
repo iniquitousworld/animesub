@@ -81,8 +81,9 @@ def transcribe_segments(
             continue
 
         try:
+            audio_input = audio_segment.squeeze(0).detach().cpu().numpy()
             segments, info = model.transcribe(
-                audio=audio_segment.numpy().squeeze(),
+                audio=audio_input,
                 language="ja",
                 word_timestamps=True,
                 beam_size=5,

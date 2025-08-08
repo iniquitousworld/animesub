@@ -92,8 +92,9 @@ def transcribe_segments(
             continue
 
         try:
+            audio_input = audio_segment.squeeze(0).detach().cpu().numpy()
             result = pipe(
-                audio_segment.numpy().squeeze(),
+                audio_input,
                 chunk_length_s=15,  
                 stride_length_s=3,  
                 return_timestamps="word",

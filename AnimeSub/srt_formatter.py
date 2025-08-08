@@ -1,4 +1,3 @@
-import datetime
 import re
 from typing import List, Dict
 
@@ -6,10 +5,10 @@ def _format_srt_time(seconds: float) -> str:
     """
     Форматирует время в секундах в формат SRT (HH:MM:SS,MMM).
     """
-    delta = datetime.timedelta(seconds=seconds)
-    hours, remainder = divmod(delta.seconds, 3600)
-    minutes, seconds = divmod(remainder, 60)
-    milliseconds = delta.microseconds // 1000
+    total_milliseconds = int(seconds * 1000)
+    hours, remainder = divmod(total_milliseconds, 3600000)
+    minutes, remainder = divmod(remainder, 60000)
+    seconds, milliseconds = divmod(remainder, 1000)
     return f"{hours:02}:{minutes:02}:{seconds:02},{milliseconds:03}"
 
 def _clean_text(text: str) -> str:
