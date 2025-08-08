@@ -1,14 +1,17 @@
 import torch
 import torchaudio
+import logging
 
 # Загрузка модели silero-vad
 model, utils = torch.hub.load(
     repo_or_dir="snakers4/silero-vad",
     model="silero_vad",
     force_reload=False,
+    trust_repo=True,
     onnx=False
 )
 (get_speech_timestamps, save_audio, read_audio, VADIterator, collect_chunks) = utils
+torchaudio.set_audio_backend("ffmpeg")
 
 def detect_speech_segments(audio_path: str):
     """
@@ -40,7 +43,8 @@ def detect_speech_segments(audio_path: str):
         model,
         sampling_rate=sample_rate,
         return_seconds=True,
-        min_silence_duration_ms=1000 
+        min_silence_duration_ms=1000,
+        min_speech_duration_ms=300
     )
-    
+    logging.info(f"Обнаружено {len(speech_timestamps)} сегментов речи: {speech_timestamps}")
     return speech_timestamps, waveform, sample_rate

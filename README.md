@@ -24,7 +24,7 @@ animesub input_file.mp4
 
 -o, --output: Путь к итоговому .srt файлу.
 
--m, --model: Имя модели Whisper (например, tiny, base, small, medium, large, kotoba-whisper). По умолчанию: small.
+-m, --model: Имя модели Whisper (например, tiny, base, small, medium, large, kotoba-whisper, kotoba-faster, kotoba-whisper-v2.2). По умолчанию: kotoba-whisper-v2.2.
 
 -d, --device: Устройство для вычислений (cpu или cuda). По умолчанию: определяется автоматически.
 

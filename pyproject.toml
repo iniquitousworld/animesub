@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "animesub"
-version = "0.2.1"
+version = "0.2.2"
 authors = [
   { name="Ivan Tyumentsev", email="ivanfufa184@gmail.com" },
 ]
@@ -18,15 +18,17 @@ classifiers = [
 ]
 
 dependencies = [
-    "demucs[cu126]>=4.0.1",
-    "faster-whisper",
-    "punctuators==0.0.5",
-    "silero-vad",
-    "torchaudio",
-    "torch",
-    "onnxruntime",
-    "transformers",
-    "accelerate"
+    "torch>=2.8.0",
+    "torchaudio>=2.8.0",
+    "faster-whisper>=1.2.0",
+    "transformers>=4.51.3",
+    "demucs>=4.0.0",
+    "punctuators>=0.0.5",
+    "numpy>=1.26.4",
+    "pyyaml>=6.0.2",
+    "tqdm>=4.67.1",
+    "sentencepiece>=0.2.0",
+    "ffmpeg-python>=0.2.0",
 ]
 
 [tool.setuptools.package-data]
