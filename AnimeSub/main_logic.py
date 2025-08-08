@@ -1,10 +1,9 @@
 import os
 import argparse
-import tempfile
-import shutil
 import torch
 import logging
 import sys
+import shutil
 from typing import List, Dict
 
 from .asr_whisper import transcribe_segments
@@ -15,6 +14,7 @@ from .punctuator import add_punctuation_with_xlm
 from .srt_formatter import segments_to_srt
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+
 
 def merge_close_segments(timestamps: List[Dict], max_silence_s: float = 0.6) -> List[Dict]:
     logging.debug(f"Объединение сегментов, max_silence_s={max_silence_s}")
@@ -33,21 +33,20 @@ def merge_close_segments(timestamps: List[Dict], max_silence_s: float = 0.6) -> 
     logging.debug(f"Объединено {len(merged_timestamps)} сегментов")
     return merged_timestamps
 
+
 def process_audio(input_path: str, output_path: str, model_name: str, device: str, demucs_model: str = "htdemucs", merge_silence: float = 0.6):
     logging.info("--- Запуск процесса создания субтитров ---")
     logging.info(f"Входной файл: {input_path}, Выходной файл: {output_path}, Модель: {model_name}, Устройство: {device}")
 
-    with tempfile.TemporaryDirectory() as temp_dir:
-        logging.debug(f"Создана временная директория: {temp_dir}")
+    # Шаг 1: Отделение вокала
+    logging.info("[1/5] Отделение вокала...")
+    vocals_path, temp_dir = separate_vocals(input_path, device=device, model_name=demucs_model)
+    if not vocals_path:
+        logging.error("Не удалось отделить вокал. Процесс прерван.")
+        return
+    logging.info(f"Вокал сохранен в: {vocals_path}")
 
-        # Шаг 1: Отделение вокала
-        logging.info("[1/5] Отделение вокала...")
-        vocals_path = separate_vocals(input_path, device=device, output_dir=temp_dir, demucs_model=demucs_model)
-        if not vocals_path:
-            logging.error("Не удалось отделить вокал. Процесс прерван.")
-            return
-        logging.info(f"Вокал сохранен в: {vocals_path}")
-
+    try:
         # Шаг 2: Детекция речи (VAD)
         logging.info("[2/5] Обнаружение сегментов речи...")
         speech_timestamps, waveform, sample_rate = detect_speech_segments(vocals_path)
@@ -58,30 +57,26 @@ def process_audio(input_path: str, output_path: str, model_name: str, device: st
 
         # Шаг 3: Транскрипция
         logging.info("[3/5] Транскрипция сегментов...")
-        try:
-            if model_name.lower() in ("kotoba-whisper", "kotoba-whisper-v2.2"):
-                speech_timestamps = merge_close_segments(speech_timestamps, max_silence_s=merge_silence)
-                logging.info(f"После объединения (max_silence_s={merge_silence:.2f}): {len(speech_timestamps)} сегментов речи")
-                transcribed_segments = transcribe_kotoba(
-                    audio_path=vocals_path,
-                    speech_timestamps=speech_timestamps,
-                    waveform=waveform,
-                    sample_rate=sample_rate,
-                    model_name=model_name,
-                    device=device
-                )
-            else:
-                transcribed_segments = transcribe_segments(
-                    audio_path=vocals_path,
-                    speech_timestamps=speech_timestamps,
-                    waveform=waveform,
-                    sample_rate=sample_rate,
-                    model_name=model_name,
-                    device=device
-                )
-        except Exception as e:
-            logging.error(f"Ошибка транскрипции: {e}")
-            return
+        if model_name.lower() in ("kotoba-whisper", "kotoba-whisper-v2.2"):
+            speech_timestamps = merge_close_segments(speech_timestamps, max_silence_s=merge_silence)
+            logging.info(f"После объединения (max_silence_s={merge_silence:.2f}): {len(speech_timestamps)} сегментов речи")
+            transcribed_segments = transcribe_kotoba(
+                audio_path=vocals_path,
+                speech_timestamps=speech_timestamps,
+                waveform=waveform,
+                sample_rate=sample_rate,
+                model_name=model_name,
+                device=device
+            )
+        else:
+            transcribed_segments = transcribe_segments(
+                audio_path=vocals_path,
+                speech_timestamps=speech_timestamps,
+                waveform=waveform,
+                sample_rate=sample_rate,
+                model_name=model_name,
+                device=device
+            )
 
         if not transcribed_segments:
             logging.error("Транскрипция не удалась: пустой результат. Процесс прерван.")
@@ -123,82 +118,57 @@ def process_audio(input_path: str, output_path: str, model_name: str, device: st
         except Exception as e:
             logging.error(f"Ошибка записи SRT файла: {e}")
             return
-    logging.info("Транскрибация прошла успешно. Временные файлы удалены")
+
+    finally:
+        # Удаляем временные файлы
+        if temp_dir and os.path.exists(temp_dir):
+            try:
+                import shutil
+                shutil.rmtree(temp_dir)
+                logging.debug(f"Временная директория удалена: {temp_dir}")
+            except Exception as e:
+                logging.warning(f"Не удалось удалить временную директорию: {e}")
+
+    logging.info("Транскрибация прошла успешно.")
+
 
 def main():
     parser = argparse.ArgumentParser(
         description="Создает субтитры (.srt) из любого видео или аудиофайла с выбором ASR движка.",
         formatter_class=argparse.RawTextHelpFormatter
     )
-    parser.add_argument(
-        "input_file",
-        type=str,
-        help="Путь к исходному видео/аудио файлу."
-    )
-    parser.add_argument(
-        "-o", "--output",
-        type=str,
-        help="Путь к итоговому .srt файлу (по умолчанию: имя_файла.srt)."
-    )
-    parser.add_argument(
-        "-m", "--model",
-        type=str,
-        default="kotoba-whisper-v2.2",
-        help="Имя модели для выбранного движка (по умолчанию: 'kotoba-whisper-v2.2')."
-    )
-    parser.add_argument(
-        "-d", "--device",
-        type=str,
-        default=None,
-        choices=['cpu', 'cuda'],
-        help="Устройство для вычислений (cpu или cuda). По умолчанию определяется автоматически."
-    )
-    parser.add_argument(
-        "--demucs-model",
-        type=str,
-        default="htdemucs",
-        choices=['htdemucs', 'mdx_extra_q'],
-        help="Модель Demucs для отделения вокала (по умолчанию: 'htdemucs')."
-    )
-    parser.add_argument(
-    "--merge-silence",
-    type=float,
-    default=0.6,
-    help="Максимальная пауза между сегментами для объединения (только для kotoba-моделей). По умолчанию: 0.6 секунд."
-    )
+    parser.add_argument("input_file", type=str, help="Путь к исходному видео/аудио файлу.")
+    parser.add_argument("-o", "--output", type=str, help="Путь к итоговому .srt файлу (по умолчанию: имя_файла.srt).")
+    parser.add_argument("-m", "--model", type=str, default="kotoba-whisper-v2.2", help="Имя модели (по умолчанию: 'kotoba-whisper-v2.2').")
+    parser.add_argument("-d", "--device", type=str, default=None, choices=['cpu', 'cuda'], help="Устройство (cpu или cuda).")
+    parser.add_argument("--demucs-model", type=str, default="htdemucs", choices=['htdemucs', 'mdx_extra_q'], help="Модель Demucs.")
+    parser.add_argument("--merge-silence", type=float, default=0.6, help="Макс. пауза между сегментами (сек).")
     args = parser.parse_args()
 
     if not shutil.which("ffmpeg"):
-        logging.critical("Ошибка: FFmpeg не найден. Пожалуйста, установите FFmpeg.")
+        logging.critical("Ошибка: FFmpeg не найден.")
         return
-    
+
     if not os.path.exists(args.input_file):
-        logging.critical(f"Ошибка: Входной файл не найден: {args.input_file}")
+        logging.critical(f"Файл не найден: {args.input_file}")
         return
 
-    if args.device is None:
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        logging.warning(f"Устройство не указано, используется: {device.upper()}")
-    else:
-        device = args.device
-        if device == "cuda" and not torch.cuda.is_available():
-            logging.error("Ошибка: CUDA недоступна. Используется CPU.")
-            device = "cpu"
+    device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
+    if args.device == "cuda" and not torch.cuda.is_available():
+        logging.error("CUDA недоступна. Используется CPU.")
+        device = "cpu"
 
-    if args.output:
-        output_file_path = args.output
-    else:
-        base_name = os.path.splitext(os.path.basename(args.input_file))[0]
-        output_file_path = f"{base_name}.srt"
-        
+    output_file_path = args.output or f"{os.path.splitext(os.path.basename(args.input_file))[0]}.srt"
+
     process_audio(
-    args.input_file,
-    output_file_path,
-    args.model,
-    device,
-    demucs_model=args.demucs_model,
-    merge_silence=args.merge_silence
+        input_path=args.input_file,
+        output_path=output_file_path,
+        model_name=args.model,
+        device=device,
+        demucs_model=args.demucs_model,
+        merge_silence=args.merge_silence
     )
+
 
 if __name__ == '__main__':
     current_dir = os.path.dirname(os.path.abspath(__file__))
