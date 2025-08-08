@@ -27,6 +27,7 @@ dependencies = [
     "transformers>=4.51.3",
     "demucs>=4.0.0",
     "punctuators>=0.0.5",
+    "soundfile>=0.12.1",
     "numpy>=1.26.4",
     "pyyaml>=6.0.2",
     "tqdm>=4.67.1",
