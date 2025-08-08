@@ -33,7 +33,7 @@ def merge_close_segments(timestamps: List[Dict], max_silence_s: float = 0.6) -> 
     logging.debug(f"Объединено {len(merged_timestamps)} сегментов")
     return merged_timestamps
 
-def process_audio(input_path: str, output_path: str, model_name: str, device: str):
+def process_audio(input_path: str, output_path: str, model_name: str, device: str, demucs_model: str = "htdemucs"):
     logging.info("--- Запуск процесса создания субтитров ---")
     logging.info(f"Входной файл: {input_path}, Выходной файл: {output_path}, Модель: {model_name}, Устройство: {device}")
 
@@ -42,7 +42,7 @@ def process_audio(input_path: str, output_path: str, model_name: str, device: st
 
         # Шаг 1: Отделение вокала
         logging.info("[1/5] Отделение вокала...")
-        vocals_path = separate_vocals(input_path, device=device, output_dir=temp_dir)
+        vocals_path = separate_vocals(input_path, device=device, output_dir=temp_dir, demucs_model=demucs_model)
         if not vocals_path:
             logging.error("Не удалось отделить вокал. Процесс прерван.")
             return
@@ -151,6 +151,13 @@ def main():
         choices=['cpu', 'cuda'],
         help="Устройство для вычислений (cpu или cuda). По умолчанию определяется автоматически."
     )
+    parser.add_argument(
+        "--demucs-model",
+        type=str,
+        default="htdemucs",
+        choices=['htdemucs', 'mdx_extra_q'],
+        help="Модель Demucs для отделения вокала (по умолчанию: 'htdemucs')."
+    )
     args = parser.parse_args()
 
     if not shutil.which("ffmpeg"):
@@ -176,7 +183,7 @@ def main():
         base_name = os.path.splitext(os.path.basename(args.input_file))[0]
         output_file_path = f"{base_name}.srt"
         
-    process_audio(args.input_file, output_file_path, args.model, device)
+    process_audio(args.input_file, output_file_path, args.model, device, demucs_model=args.demucs_model)
 
 if __name__ == '__main__':
     current_dir = os.path.dirname(os.path.abspath(__file__))

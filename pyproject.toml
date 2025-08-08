@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "animesub"
-version = "0.2.2"
+version = "0.2.3"
 authors = [
   { name="Ivan Tyumentsev", email="ivanfufa184@gmail.com" },
 ]
@@ -29,6 +29,7 @@ dependencies = [
     "tqdm>=4.67.1",
     "sentencepiece>=0.2.0",
     "ffmpeg-python>=0.2.0",
+    "diffq>=0.2.4"
 ]
 
 [tool.setuptools.package-data]

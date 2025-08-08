@@ -1,42 +1,84 @@
-import os
 import subprocess
 import logging
+import shutil
+from pathlib import Path
+import torchaudio
 
-def separate_vocals(audio_path: str, device: str, output_dir: str = "separated"):
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+
+def separate_vocals(input_path: str, device: str = "cpu", output_dir: str = None, demucs_model: str = "htdemucs") -> str:
     """
-    Separates vocal track from an audio file using Demucs.
-    
+    Отделяет вокал из аудио/видео файла, используя Demucs.
+
     Args:
-        audio_path (str): The path to the input audio file.
-        output_dir (str): The directory where the separated tracks will be saved.
-    
+        input_path: Путь к входному аудио/видео файлу.
+        device: Устройство для вычислений ('cpu' или 'cuda').
+        output_dir: Директория для сохранения результата.
+        demucs_model: Модель Demucs (например, 'htdemucs', 'mdx_extra_q').
+
     Returns:
-        str: The path to the separated vocal track.
+        Путь к файлу с вокалом или None в случае ошибки.
     """
-    logging.info(f"Отделение вокала из {audio_path}...")
+    logging.info(f"Отделение вокала из {input_path} с моделью {demucs_model}...")
     
-    # Создаем выходную директорию, если она не существует
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-    
-    # Команда для Demucs, которая разделяет аудио на 4 дорожки (вокал, барабаны, бас, другое)
+    # Проверка наличия FFmpeg
+    if not shutil.which("ffmpeg"):
+        logging.critical("FFmpeg не найден. Установите FFmpeg через 'conda install ffmpeg -c conda-forge' или добавьте в PATH.")
+        return None
+
+    # Установка бэкенда torchaudio
+    try:
+        torchaudio.set_audio_backend("ffmpeg")
+        logging.info("Бэкенд torchaudio установлен: ffmpeg")
+    except Exception as e:
+        logging.error(f"Ошибка установки бэкенда ffmpeg в torchaudio: {e}")
+        return None
+
+    input_path = Path(input_path)
+    if not input_path.exists():
+        logging.error(f"Входной файл не найден: {input_path}")
+        return None
+
+    if output_dir is None:
+        output_dir = input_path.parent
+    else:
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+    output_subdir = output_dir / demucs_model / input_path.stem
+    vocals_path = output_subdir / "vocals.wav"
+
+    if vocals_path.exists():
+        logging.info(f"Вокал уже существует: {vocals_path}")
+        return str(vocals_path)
+
     command = [
         "demucs",
-        "--device", device, # Добавляем флаг устройства
-        audio_path,
-        "-o", output_dir
+        "--two-stems=vocals",
+        f"-n={demucs_model}",
+        f"--device={device}",
+        "-o",
+        str(output_dir),
+        str(input_path)
     ]
-    
-    # Запускаем команду
-    subprocess.run(command, check=True)
-    
-    # Формируем путь к файлу с вокалом
-    vocal_track_name = os.path.splitext(os.path.basename(audio_path))[0]
-    vocal_track_path = os.path.join(output_dir, "htdemucs", vocal_track_name, "vocals.wav")
-    
-    if os.path.exists(vocal_track_path):
-        logging.info(f"Вокал успешно отделен и сохранен в {vocal_track_path}")
-        return vocal_track_path
-    else:
-        logging.critical("Ошибка: файл с вокалом не найден.")
+
+    logging.info(f"Запуск команды: {' '.join(command)}")
+    try:
+        result = subprocess.run(command, check=True, capture_output=True, text=True)
+        logging.debug(f"Вывод demucs: {result.stdout}")
+        logging.debug(f"Ошибки demucs (если есть): {result.stderr}")
+    except subprocess.CalledProcessError as e:
+        logging.error(f"Ошибка при выполнении demucs: {e}")
+        logging.error(f"Вывод: {e.stdout}")
+        logging.error(f"Ошибки: {e.stderr}")
         return None
+    except FileNotFoundError:
+        logging.critical("Команда 'demucs' не найдена. Убедитесь, что пакет demucs установлен ('pip install demucs').")
+        return None
+
+    if not vocals_path.exists():
+        logging.error(f"Файл вокала не создан: {vocals_path}")
+        return None
+
+    logging.info(f"Вокал успешно отделен и сохранен в {vocals_path}")
+    return str(vocals_path)
