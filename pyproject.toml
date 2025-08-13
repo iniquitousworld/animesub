@@ -4,9 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "animesub"
-version = "0.4.1"
+version = "1.0.0"
 authors = [
-  { name="Ivan Tyumentsev", email="ivanfufa184@gmail.com" },
+  { name="Ivan Tyumentsev", email="ivanfufa184@gmail.com" }
 ]
 description = "Инструмент для автоматического создания субтитров для аниме"
 readme = "README.md"
@@ -33,7 +33,8 @@ dependencies = [
     "tqdm>=4.67.1",
     "sentencepiece>=0.2.0",
     "ffmpeg-python>=0.2.0",
-    "diffq>=0.2.4"
+    "diffq>=0.2.4",
+    "yt-dlp>=2025.1.26", 
 ]
 
 [project.urls]

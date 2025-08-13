@@ -1,144 +1,124 @@
 import logging
 import os
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
-from typing import Tuple, List
+from typing import Tuple
+import soundfile as sf  # для определения длительности
 
-import torchaudio
-import soundfile as sf
-import numpy as np
+logger = logging.getLogger(__name__)
 
-torchaudio.set_audio_backend("ffmpeg")
+CHUNK_DURATION_SEC = 8 * 60  # 8 минут
 
+if sys.platform == "win32":
+    creationflags = subprocess.CREATE_NO_WINDOW
+else:
+    creationflags = 0  # Для не-Windows систем
 
-def convert_to_wav(input_path: str, output_path: str, sr: int = 44100) -> None:
-    """
-    Конвертирует любой видео или аудиофайл в WAV с помощью ffmpeg.
-    """
+def check_cancel(cancel_event):
+    if cancel_event and hasattr(cancel_event, "is_set") and cancel_event.is_set():
+        raise InterruptedError("Отмена в separator.py")
+
+def get_audio_duration(path: str) -> float:
+    """Возвращает длительность аудио в секундах."""
+    try:
+        f = sf.SoundFile(path)
+        return len(f) / f.samplerate
+    except Exception:
+        cmd = [
+            "ffprobe", "-v", "error", "-show_entries",
+            "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", path
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True,
+        creationflags=creationflags)
+        return float(result.stdout.strip())
+
+def run_demucs_subprocess(wav_path: str, model_name: str, device: str, temp_dir: str):
+    logger.info(f"Запуск Demucs в подпроцессе для {wav_path}")
+    python_exe = sys._base_executable if hasattr(sys, "_base_executable") else sys.executable
     cmd = [
-        "ffmpeg", "-y",
-        "-i", input_path,
-        "-ar", str(sr),
-        "-ac", "1",
-        "-vn",
-        output_path,
+        python_exe, "-m", "demucs.separate",
+        "--two-stems", "vocals",
+        "-n", model_name,
+        "--device", device,
+        "-o", temp_dir,
+        wav_path
     ]
-    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-
-
-def chunk_audio(wav_path: str, chunk_duration: float = 90.0) -> List[str]:
-    """
-    Делит WAV-файл на чанки фиксированной длины.
-    Возвращает список путей к чанкам.
-    """
-    waveform, sample_rate = torchaudio.load(wav_path)
-    samples_per_chunk = int(chunk_duration * sample_rate)
-
-    chunk_paths = []
-    for i in range(0, waveform.size(1), samples_per_chunk):
-        chunk = waveform[:, i:i + samples_per_chunk]
-        chunk_path = str(Path(wav_path).with_stem(f"{Path(wav_path).stem}_chunk_{len(chunk_paths)}"))
-        chunk_path += ".wav"
-        torchaudio.save(chunk_path, chunk, sample_rate)
-        chunk_paths.append(chunk_path)
-    return chunk_paths
-
-
-def concat_chunks(chunk_paths: List[str], output_path: str) -> None:
-    """
-    Склеивает чанки в один WAV-файл.
-    """
-    audio_data = []
-    sample_rate = None
-
-    for path in chunk_paths:
-        data, sr = sf.read(path)
-        audio_data.append(data)
-        sample_rate = sr
-
-    combined = np.concatenate(audio_data, axis=0)
-    sf.write(output_path, combined, sample_rate)
-
-
-def separate_vocals(input_path: str, model_name: str = "htdemucs", device: str = "cuda") -> Tuple[str, str]:
-    """
-    Выполняет вокальную сепарацию с помощью Demucs.
-    Если длинный файл на CPU — делит на чанки.
-    """
-    logging.info(f"Отделение вокала из {input_path} с моделью {model_name}...")
-
-    temp_dir = tempfile.mkdtemp()
-    wav_path = os.path.join(temp_dir, "converted.wav")
-
     try:
-        logging.debug("Конвертация входного файла в WAV...")
-        convert_to_wav(input_path, wav_path)
-    except subprocess.CalledProcessError:
-        logging.error("Не удалось сконвертировать файл в WAV через ffmpeg.")
-        return input_path, temp_dir
+        result = subprocess.run(cmd, check=True, capture_output=True, text=True, encoding="utf-8", creationflags=creationflags)
+        logger.debug(f"Demucs stdout: {result.stdout}")
+        logger.info("Demucs успешно завершил работу.")
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Demucs завершился с ошибкой (код {e.returncode}).")
+        logger.error(f"Demucs stderr: {e.stderr}")
+        raise RuntimeError("Ошибка выполнения Demucs. Подробности в логе.")
 
-    try:
-        # Получим длительность аудио
-        info = torchaudio.info(wav_path)
-        duration = info.num_frames / info.sample_rate
-        logging.debug(f"Длительность WAV-файла: {duration:.2f} секунд")
+def process_single_file(wav_path, model_name, device, temp_dir, cancel_event):
+    check_cancel(cancel_event)
+    run_demucs_subprocess(wav_path, model_name, device, temp_dir)
+    check_cancel(cancel_event)
+    vocals_path = os.path.join(temp_dir, model_name, "input", "vocals.wav")
+    if os.path.exists(vocals_path):
+        return vocals_path
+    return wav_path
 
-        use_chunking = device == "cpu" and duration > 300
+def separate_vocals(
+    input_path: str,
+    model_name: str = "htdemucs",
+    device: str = "cuda",
+    existing_temp_dir: str = None,
+    cancel_event=None
+) -> Tuple[str, str]:
+    check_cancel(cancel_event)
+    logger.info(f"Начало отделения вокала из {input_path} с моделью {model_name}.")
 
-        if use_chunking:
-            logging.info("Файл длинный и используется CPU — включено разбиение на чанки.")
-            chunk_paths = chunk_audio(wav_path, chunk_duration=90.0)
+    temp_dir = existing_temp_dir or tempfile.mkdtemp(prefix="demucs_")
 
-            vocals_chunks = []
-            for chunk_path in chunk_paths:
-                logging.debug(f"Обработка чанка: {chunk_path}")
-                subprocess.run(
-                    [
-                        "demucs",
-                        "--two-stems=vocals",
-                        f"-n={model_name}",
-                        f"--device={device}",
-                        "-o", temp_dir,
-                        chunk_path,
-                    ],
-                    check=True
-                )
-                track_name = Path(chunk_path).stem
-                vocals_path = os.path.join(temp_dir, model_name, track_name, "vocals.wav")
-                if os.path.exists(vocals_path):
-                    vocals_chunks.append(vocals_path)
-                else:
-                    raise FileNotFoundError(f"Вокал не найден для чанка: {chunk_path}")
+    wav_path = os.path.join(temp_dir, "input.wav")
+    if not input_path.lower().endswith(".wav"):
+        logger.info(f"Конвертация {input_path} в {wav_path} для Demucs.")
+        subprocess.run([
+            "ffmpeg", "-y", "-i", input_path, "-ar", "44100", "-ac", "2", "-vn", wav_path
+        ], check=True, capture_output=True, creationflags=creationflags)
+    else:
+        if Path(input_path) != Path(wav_path):
+            subprocess.run(["ffmpeg", "-y", "-i", input_path, wav_path],
+                           check=True, capture_output=True, creationflags=creationflags)
 
-            final_vocals_path = os.path.join(temp_dir, "vocals_final.wav")
-            logging.debug("Склейка всех вокальных чанков...")
-            concat_chunks(vocals_chunks, final_vocals_path)
-            logging.info("Вокал успешно извлечён по чанкам.")
-            return final_vocals_path, temp_dir
+    duration = get_audio_duration(wav_path)
+    logger.info(f"Длительность аудио: {duration:.2f} сек.")
 
-        else:
-            logging.info("Обычный режим обработки (без чанков)...")
-            subprocess.run(
-                [
-                    "demucs",
-                    "--two-stems=vocals",
-                    f"-n={model_name}",
-                    f"--device={device}",
-                    "-o", temp_dir,
-                    wav_path,
-                ],
-                check=True
-            )
-            track_name = Path(wav_path).stem
-            vocals_path = os.path.join(temp_dir, model_name, track_name, "vocals.wav")
-            if os.path.exists(vocals_path):
-                logging.info("Вокал успешно извлечён.")
-                return vocals_path, temp_dir
-            else:
-                raise FileNotFoundError("Файл vocals.wav не найден.")
+    if duration > CHUNK_DURATION_SEC:
+        logger.info("Аудио дольше 8 минут — выполняем разбиение на чанки.")
+        chunks_dir = os.path.join(temp_dir, "chunks")
+        os.makedirs(chunks_dir, exist_ok=True)
 
-    except Exception as e:
-        logging.warning(f"Demucs не смог обработать файл: {e}")
-        logging.warning("Будет использован исходный .wav без отделения вокала.")
-        return wav_path, temp_dir
+        subprocess.run([
+            "ffmpeg", "-i", wav_path, "-f", "segment", "-segment_time", str(CHUNK_DURATION_SEC),
+            "-c", "copy", os.path.join(chunks_dir, "chunk_%03d.wav")
+        ], check=True, capture_output=True, creationflags=creationflags)
+
+        processed_chunks = []
+        for chunk_file in sorted(Path(chunks_dir).glob("chunk_*.wav")):
+            logger.info(f"Обработка чанка {chunk_file}")
+            chunk_temp = tempfile.mkdtemp(prefix="demucs_chunk_", dir=temp_dir)
+            processed_vocals = process_single_file(str(chunk_file), model_name, device, chunk_temp, cancel_event)
+            processed_chunks.append(processed_vocals)
+
+        concat_list = os.path.join(temp_dir, "concat_list.txt")
+        with open(concat_list, "w", encoding="utf-8") as f:
+            for p in processed_chunks:
+                f.write(f"file '{p}'\n")
+
+        merged_vocals = os.path.join(temp_dir, "vocals_merged.wav")
+        subprocess.run([
+            "ffmpeg", "-f", "concat", "-safe", "0", "-i", concat_list, "-c", "copy", merged_vocals
+        ], check=True, capture_output=True, creationflags=creationflags)
+
+        logger.info("Вокал успешно извлечён и склеен из чанков.")
+        return merged_vocals, temp_dir
+    else:
+        logger.info("Аудио короче или равно 8 минутам — обрабатываем целиком.")
+        vocals_path = process_single_file(wav_path, model_name, device, temp_dir, cancel_event)
+        return vocals_path, temp_dir

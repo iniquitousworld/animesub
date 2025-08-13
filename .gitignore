@@ -1,5 +1,5 @@
 # Python-специфичные файлы
-AnimeSub/__pycache__/
+animesub/__pycache__/
 
 # Папки с временными файлами и дистрибутивами
 animesub.egg-info/
@@ -7,3 +7,15 @@ dist/
 
 # Другие временные файлы
 *.pyc
+
+# Всё что нужно было для сборки ехе
+kataribe.rar
+cli.py
+old.rar
+ffprobe.exe
+ffmpeg.exe
+run_gui.py
+AnimeSub.rar
+build/
+animesub/gui.py
+animesub/assets/
