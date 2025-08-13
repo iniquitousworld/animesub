@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "animesub"
-version = "1.0.2"
+version = "1.0.3"
 authors = [
   { name="Ivan Tyumentsev", email="ivanfufa184@gmail.com" }
 ]
