@@ -17,6 +17,9 @@ animesub -i input_file.mp4
 animesub -u "https://youtube.com/watch?v=XXXX"
 ```
 
+**Запуск в Colab**
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/iniquitousworld/animesub/blob/main/animesub_colab.ipynb)
+
 ---
 
 ## 📦 Установка

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "animesub"
-version = "1.0.0"
+version = "1.0.1"
 authors = [
   { name="Ivan Tyumentsev", email="ivanfufa184@gmail.com" }
 ]
@@ -43,10 +43,10 @@ Documentation = "https://github.com/iniquitousworld/animesub#readme"
 Issues = "https://github.com/iniquitousworld/animesub/issues"
 
 [tool.setuptools.package-data]
-"AnimeSub" = ["*.py"]
+"animesub" = ["*.py"]
 
 [tool.setuptools]
-packages = ["AnimeSub"]
+packages = ["animesub"]
 
 [project.scripts]
-animesub = "AnimeSub.main_logic:main"
+animesub = "animesub.main_logic:main"
