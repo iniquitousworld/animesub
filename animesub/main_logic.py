@@ -102,7 +102,7 @@ def process_audio(
     device: str,
     url: Optional[str],
     demucs_model: str = "htdemucs",
-    merge_silence: float = 0.6,
+    merge_silence: float = 0.4,
     progress_callback: Optional[Callable[[float, str], None]] = None,
     cancel_event=None
 ):
@@ -198,7 +198,7 @@ def process_audio(
             raise RuntimeError("Транскрипция не дала результатов.")
 
         check_cancel(cancel_event)
-        subtitles_data = build_subtitles_by_words_merged(all_segments, max_chars=100, max_gap=0.2)
+        subtitles_data = build_subtitles_by_words_merged(all_segments, max_chars=100, max_gap=merge_silence)
 
         # --- Шаг 4: Пунктуация и сохранение ---
         _report_progress(0.7, "Расстановка пунктуации...")
