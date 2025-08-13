@@ -4,7 +4,7 @@ import logging
 import shutil
 import tempfile
 import torch
-from typing import List, Dict, Callable, Optional
+from typing import Callable, Optional
 
 from animesub.model_manager import ModelManager
 from animesub.utils import get_memory_usage
@@ -17,83 +17,84 @@ def check_cancel(cancel_event):
     if cancel_event and cancel_event.is_set():
         raise InterruptedError("Процесс был отменён пользователем.")
 
-def merge_close_segments(timestamps: List[Dict], max_silence_s: float = 0.6) -> List[Dict]:
-    if not timestamps:
-        logger.warning("Список таймстампов для объединения пуст.")
-        return []
-    logger.debug(f"Объединение сегментов с максимальной паузой {max_silence_s}s")
-    merged_timestamps = []
-    current_segment = timestamps[0].copy()
-    for next_segment in timestamps[1:]:
-        if (next_segment['start'] - current_segment['end']) < max_silence_s:
-            current_segment['end'] = next_segment['end']
-        else:
-            merged_timestamps.append(current_segment)
-            current_segment = next_segment.copy()
-    merged_timestamps.append(current_segment)
-    logger.info(f"{timestamps} Старые сегменты")
-    logger.info(f"Объединено {len(timestamps)} -> {len(merged_timestamps)} сегментов.")
-    return merged_timestamps
-
-def build_subtitles_by_words_merged(asr_results, max_chars=20, max_gap=0.5):
+def stream_subtitles_by_words(transcription_iterator, max_chars=100, max_gap=0.5):
     """
-    Собирает субтитры на основе word timestamps из нескольких сегментов подряд.
-    Объединяет слова между сегментами, если пауза между ними меньше max_gap.
+    Потоковая версия формирования субтитров по словам.
+    Разбивает строки:
+      - по терминальной пунктуации (。！？!?,.)
+      - при длинной паузе между словами (gap > max_gap)
+      - при превышении max_chars
     """
-    subtitles = []
+    terminals = ("。", "！", "？", "!", "?", "、", ",", ".", "…")
     current_line = ""
     current_start = None
     last_word_end = None
 
-    # Проходим все слова всех сегментов как один список
-    for seg in asr_results:
-        for w in seg.get('words', []):
-            # Определяем gap между текущим словом и предыдущим
-            gap = 0
-            if last_word_end is not None and w['start'] is not None:
-                gap = w['start'] - last_word_end
+    for seg in transcription_iterator:
+        for w in seg.get("words", []):
+            word = w["word"]
+            start = w.get("start")
+            end = w.get("end")
 
-            # Если gap большой — закрываем предыдущую реплику
-            if gap > max_gap and current_line:
-                subtitles.append({
+            # Пропускаем пустые токены
+            if not word or start is None or end is None:
+                continue
+
+            # Проверка паузы перед словом
+            if last_word_end is not None and start - last_word_end > max_gap and current_line:
+                yield {
                     "start": current_start,
                     "end": last_word_end,
                     "text": current_line.strip()
-                })
+                }
                 current_line = ""
                 current_start = None
 
-            # Начало новой реплики
+            # Если это начало новой реплики
             if current_start is None:
-                current_start = w['start']
+                current_start = start
 
-            # Добавляем слово
+            # Добавляем слово с пробелом только если это не японский текст
             if current_line:
-                current_line += " "
-            current_line += w['word']
+                # Для японского текста пробелы обычно не нужны
+                if any("\u3040" <= ch <= "\u30ff" or "\u4e00" <= ch <= "\u9faf" for ch in word):
+                    current_line += word
+                else:
+                    current_line += " " + word
+            else:
+                current_line = word
 
-            # Если превышен лимит символов — закрываем реплику
-            if len(current_line) >= max_chars:
-                subtitles.append({
+            # Разрыв по терминальной пунктуации
+            if word.endswith(terminals) or any(current_line.endswith(t) for t in terminals):
+                yield {
                     "start": current_start,
-                    "end": w['end'],
+                    "end": end,
                     "text": current_line.strip()
-                })
+                }
+                current_line = ""
+                current_start = None
+                last_word_end = end
+                continue
+
+            # Разрыв по длине
+            if len(current_line) >= max_chars:
+                yield {
+                    "start": current_start,
+                    "end": end,
+                    "text": current_line.strip()
+                }
                 current_line = ""
                 current_start = None
 
-            last_word_end = w['end']
+            last_word_end = end
 
-    # Закрываем последнюю строку
+    # Финальный сброс
     if current_line and current_start is not None:
-        subtitles.append({
+        yield {
             "start": current_start,
             "end": last_word_end,
             "text": current_line.strip()
-        })
-
-    return subtitles
-
+        }
 
 def process_audio(
     input_path: Optional[str],
@@ -104,12 +105,12 @@ def process_audio(
     demucs_model: str = "htdemucs",
     merge_silence: float = 0.4,
     progress_callback: Optional[Callable[[float, str], None]] = None,
+    pitch_shift_steps: int = -2,
     cancel_event=None
 ):
     """Основная логика обработки аудио с централизованным управлением моделями."""
     from animesub.download_video import download_audio_wav
-    from animesub.asr_whisper import transcribe_segments
-    from animesub.asr_kotoba import transcribe_segments as transcribe_kotoba
+    from animesub.asr_whisper import transcribe_segments, BatchedInferencePipeline
     from animesub.separator import separate_vocals
     from animesub.vad_detector import detect_speech_segments
     from animesub.punctuator import add_punctuation_with_xlm
@@ -171,34 +172,29 @@ def process_audio(
 
         # --- Шаг 3: Транскрипция (ASR) ---
         _report_progress(0.4, f"Транскрипция с {model_name}...")
-        is_kotoba_model = "kotoba" in model_name.lower()
-        asr_model_type = "asr_kotoba" if is_kotoba_model else "asr"
         
-        # Уточняем ID модели для Kotoba
-        asr_model_id = f"kotoba-tech/{model_name}" if "kotoba-whisper" in model_name else model_name
+        asr_model_type = "asr"
+        is_kotoba_model = "kotoba" in model_name.lower()
+        asr_model_id = model_name
+        if is_kotoba_model and "kotoba-tech/" not in asr_model_id:
+            asr_model_id = f"kotoba-tech/{model_name}"
 
         asr_model = model_manager.load_model(asr_model_type, model_name=asr_model_id, device=device)
+        batched_model = BatchedInferencePipeline(model=asr_model)
+        transcription_iterator = transcribe_segments(
+            speech_timestamps, waveform, sample_rate, batched_model, cancel_event, pitch_steps=pitch_shift_steps
+        )
 
-        if is_kotoba_model:
-            speech_timestamps = merge_close_segments(speech_timestamps, max_silence_s=merge_silence)
-            transcription_iterator = transcribe_kotoba(
-                speech_timestamps, waveform, sample_rate, asr_model, cancel_event
-            )
-        else:
-            from animesub.asr_whisper import BatchedInferencePipeline
-            batched_model = BatchedInferencePipeline(model=asr_model)
-            transcription_iterator = transcribe_segments(
-                speech_timestamps, waveform, sample_rate, batched_model, cancel_event
-            )
-
-        all_segments = list(transcription_iterator)
-        model_manager.unload_model(asr_model_type)
-
-        if not all_segments:
-            raise RuntimeError("Транскрипция не дала результатов.")
+        # Выгружаем модель, используя правильный ключ
+        model_key_to_unload = f"{asr_model_type}_{asr_model_id}"
+        model_manager.unload_model(model_key_to_unload)
 
         check_cancel(cancel_event)
-        subtitles_data = build_subtitles_by_words_merged(all_segments, max_chars=100, max_gap=merge_silence)
+        subtitles_data = list(stream_subtitles_by_words(
+            transcription_iterator,
+            max_chars=100,
+            max_gap=merge_silence
+        ))
 
         # --- Шаг 4: Пунктуация и сохранение ---
         _report_progress(0.7, "Расстановка пунктуации...")
@@ -260,7 +256,8 @@ def main():
     parser.add_argument("-d", "--device", type=str, default=None, choices=['cpu', 'cuda'])
     parser.add_argument("-u", "--url", type=str, default=None)
     parser.add_argument("--demucs-model", type=str, default="htdemucs", choices=['htdemucs', 'mdx_extra_q'])
-    parser.add_argument("--merge-silence", type=float, default=0.6)
+    parser.add_argument("--merge-silence", type=float, default=0.3)
+    parser.add_argument("--pitch-shift", type=int, default=-2, help="Сдвиг тона в полутонах для улучшения распознавания высоких голосов. 0 для отключения.")
     args = parser.parse_args()
 
     if not shutil.which("ffmpeg"):
@@ -288,7 +285,8 @@ def main():
     process_audio(
         input_path=args.input_file, output_path=output_file_path,
         model_name=args.model, device=device, url=args.url,
-        demucs_model=args.demucs_model, merge_silence=args.merge_silence
+        demucs_model=args.demucs_model, merge_silence=args.merge_silence,
+        pitch_shift_steps=args.pitch_shift
     )
 
 if __name__ == '__main__':

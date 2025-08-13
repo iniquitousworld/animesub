@@ -43,9 +43,9 @@ def detect_speech_segments(audio_path: str, model, utils, cancel_event=None):
         sampling_rate=sample_rate,
         threshold=0.30,
         return_seconds=True,
-        min_silence_duration_ms=800,
+        min_silence_duration_ms=500,
         min_speech_duration_ms=80,
-        speech_pad_ms=1000
+        speech_pad_ms=500
     )
 
     logger.info(f"VAD обнаружил {len(speech_timestamps)} сегментов речи.")

@@ -26,7 +26,8 @@ def transcribe_segments(
     waveform: torch.Tensor,
     sample_rate: int,
     batched_model: BatchedInferencePipeline,
-    cancel_event=None
+    cancel_event=None,
+    pitch_steps: int = -2
 ) -> Generator[Dict[str, Union[float, str, List[Dict[str, Union[str, float]]]]], None, None]:
 
     logger.info(f"Запуск транскрипции Whisper для {len(speech_timestamps)} сегментов.")
@@ -70,11 +71,12 @@ def transcribe_segments(
 
                 try:
                     # Снижение тона
-                    audio_segment = torchaudio.functional.pitch_shift(
-                        audio_segment.unsqueeze(0),
-                        sample_rate,
-                        n_steps=-2
-                    ).squeeze(0)
+                    if pitch_steps != 0: 
+                        audio_segment = torchaudio.functional.pitch_shift(
+                            audio_segment.unsqueeze(0),
+                            sample_rate,
+                            n_steps=pitch_steps 
+                        ).squeeze(0)
 
                     # RMS нормализация
                     audio_input = rms_normalize(audio_segment.cpu(), target_rms=0.1)
@@ -88,7 +90,7 @@ def transcribe_segments(
                         vad_filter=False,
                         no_repeat_ngram_size=5,
                         batch_size=8,
-                        beam_size=8
+                        beam_size=10
                     )
 
                     logger.debug(

@@ -1,6 +1,5 @@
 from animesub.main_logic import process_audio
 from animesub.download_video import download_audio_wav
-from animesub.asr_kotoba import transcribe_segments as kotoba_transcribe
 from animesub.asr_whisper import transcribe_segments as whisper_transcribe
 from animesub.separator import separate_vocals
 from animesub.vad_detector import detect_speech_segments
