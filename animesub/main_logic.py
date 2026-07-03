@@ -8,6 +8,9 @@ from typing import Callable, Optional
 
 from animesub.model_manager import ModelManager
 from animesub.utils import get_memory_usage
+from animesub.vad_detector import load_silero_vad
+from animesub.punctuator import load_punctuator
+from animesub.asr_whisper import load_whisper
 
 
 logger = logging.getLogger(__name__)
@@ -114,7 +117,7 @@ def process_audio(
     from animesub.separator import separate_vocals
     from animesub.vad_detector import detect_speech_segments
     from animesub.punctuator import add_punctuation_with_xlm
-    from animesub.srt_formatter import _format_srt_time, _clean_text
+    from animesub.srt_formatter import create_srt_file
 
     def _report_progress(value: float, message: str):
         logger.info(f"Progress {int(value*100)}%: {message}")
@@ -160,7 +163,7 @@ def process_audio(
 
         # --- Шаг 2: Детекция речи (VAD) ---
         _report_progress(0.3, "Обнаружение речи (VAD)...")
-        vad_model_pack = model_manager.load_model("vad", device=device)
+        vad_model_pack = model_manager.load_model("vad", loader_func=load_silero_vad, device=device)
         speech_timestamps, waveform, sample_rate = detect_speech_segments(
             vocals_path, vad_model_pack['model'], vad_model_pack['utils'], cancel_event
         )
@@ -179,7 +182,12 @@ def process_audio(
         if is_kotoba_model and "kotoba-tech/" not in asr_model_id:
             asr_model_id = f"kotoba-tech/{model_name}"
 
-        asr_model = model_manager.load_model(asr_model_type, model_name=asr_model_id, device=device)
+        asr_model = model_manager.load_model(
+            model_key=f"faster-whisper-{asr_model_id}", 
+            loader_func=load_whisper, 
+            model_name=asr_model_id, 
+            device=device
+        )
         batched_model = BatchedInferencePipeline(model=asr_model)
         transcription_iterator = transcribe_segments(
             speech_timestamps, waveform, sample_rate, batched_model, cancel_event, pitch_steps=pitch_shift_steps
@@ -198,10 +206,11 @@ def process_audio(
 
         # --- Шаг 4: Пунктуация и сохранение ---
         _report_progress(0.7, "Расстановка пунктуации...")
-        punctuator_model = model_manager.load_model("punctuator")
+        punctuator_model = model_manager.load_model("punctuator", loader_func=load_punctuator)
 
         # Берём только непустые реплики
-        texts_to_punctuate = [s['text'] for s in subtitles_data if s and s.get('text')]
+        valid_subs = [s['text'] for s in subtitles_data if s and s.get('text')]
+        texts_to_punctuate = [s["text"] for s in valid_subs]
 
         # Подаём весь список сразу — группировка и чистка теперь внутри add_punctuation_with_xlm
         punctuated_results = add_punctuation_with_xlm(
@@ -210,19 +219,7 @@ def process_audio(
             cancel_event=cancel_event
         )
 
-        with open(output_path, 'w', encoding='utf-8') as f:
-            for idx, sub in enumerate(subtitles_data, start=1):
-                if not sub or not sub.get('text'):
-                    continue
-
-                punctuated_text = "".join(punctuated_results[idx - 1])
-                start_time = _format_srt_time(sub['start'])
-                end_time = _format_srt_time(sub['end'])
-                cleaned_text = _clean_text(punctuated_text)
-
-                if cleaned_text:
-                    f.write(f"{idx}\n{start_time} --> {end_time}\n{cleaned_text}\n\n")
-
+        create_srt_file(output_path, valid_subs, punctuated_results)
         
         logger.info(f"Субтитры успешно сохранены в: {output_path}")
 

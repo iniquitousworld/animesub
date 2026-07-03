@@ -13,6 +13,23 @@ def check_cancel(cancel_event):
     if cancel_event and cancel_event.is_set():
         raise InterruptedError("Отмена в asr_whisper.py")
 
+def load_whisper(model_name: str, device: str, compute_type: str = None):
+    from faster_whisper import WhisperModel
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    # Если compute_type не передали явно, определяем его умно, как было раньше
+    if compute_type is None:
+        if device == "cuda" and torch.cuda.is_available():
+            capability = torch.cuda.get_device_capability()
+            compute_type = "float16" if capability[0] >= 7 else "float32"
+        else:
+            compute_type = "int8"
+            
+    logger.info(f"Загрузка Whisper: {model_name}, device: {device}, compute_type: {compute_type}")
+    
+    return WhisperModel(model_name, device=device, compute_type=compute_type)
+
 def rms_normalize(audio, target_rms=0.1, tolerance=0.03):
     """Нормализация RMS с допустимым отклонением."""
     rms = torch.sqrt(torch.mean(audio**2))

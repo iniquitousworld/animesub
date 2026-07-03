@@ -32,3 +32,17 @@ def _clean_text(text: str) -> str:
     cleaned_text = re.sub(r'\s+', '', cleaned_text).strip()
 
     return cleaned_text
+
+def create_srt_file(output_path, valid_subs, punctuated_results):
+    with open(output_path, "w", encoding="utf-8") as f:
+        for idx, (sub, punct_parts) in enumerate(zip(valid_subs, punctuated_results), start=1):
+
+            punctuated_text = "".join(punct_parts)
+            cleaned_text = _clean_text(punctuated_text)
+
+            if cleaned_text:
+                f.write(
+                    f"{idx}\n"
+                    f"{_format_srt_time(sub['start'])} --> {_format_srt_time(sub['end'])}\n"
+                    f"{cleaned_text}\n\n"
+                )

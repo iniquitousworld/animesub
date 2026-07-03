@@ -26,51 +26,25 @@ class ModelManager:
             self.compute_type = "int8" # Для CPU используем INT8 для лучшей производительности
             logger.warning("CUDA недоступна или не выбрана. Используется CPU с compute_type=int8.")
     
-    def load_model(self, model_type: str, model_name: str = None, device: str = "cpu"):
-        """Ленивая загрузка и кэширование модели."""
-        # Используем составной ключ, если модель имеет имя (например, для разных ASR)
-        model_key = f"{model_type}_{model_name}" if model_name else model_type
+    def load_model(self, model_key: str, loader_func: callable, **kwargs):
         if model_key in self.models:
             return self.models[model_key]
 
-        self._setup_device(device)
-        logger.info(f"Загрузка модели типа '{model_type}' (имя: {model_name or 'default'})...")
-        logger.debug(f"Использование памяти перед загрузкой: {get_memory_usage()}")
-        
-        model = None
-        try:
-            if model_type == "vad":
-                model, utils = torch.hub.load(
-                    repo_or_dir="snakers4/silero-vad", model="silero_vad",
-                    force_reload=False, trust_repo=True, onnx=False
-                )
-                model = {"model": model.to(self.device), "utils": utils} # Перемещаем модель VAD на выбранное устройство
-
-            elif model_type == "asr":
-                from faster_whisper import WhisperModel
-                # Эта строка теперь загружает ЛЮБУЮ faster-whisper совместимую модель, включая Kotoba
-                model = WhisperModel(model_name, device=self.device, compute_type=self.compute_type)
-            
-            elif model_type == "punctuator":
-                from punctuators.models import PunctCapSegModelONNX
-                # Эта модель работает на CPU, нет смысла указывать device
-                model = PunctCapSegModelONNX.from_pretrained(
-                    "1-800-BAD-CODE/xlm-roberta_punctuation_fullstop_truecase"
-                )
-
-            if model:
-                self.models[model_key] = model
-                logger.info(f"Модель '{model_key}' успешно загружена.")
-                logger.debug(f"Использование памяти после загрузки: {get_memory_usage()}")
-                return model
-            else:
-                raise ValueError(f"Неизвестный тип или имя модели: {model_type}, {model_name}")
-
+        try: 
+            model = loader_func(**kwargs) 
         except Exception as e:
             logger.error(f"Не удалось загрузить модель '{model_key}': {e}", exc_info=True)
             self.unload_model(model_key) # Попытка очистки в случае ошибки
             raise
 
+        if model:
+            self.models[model_key] = model
+            logger.info(f"Модель '{model_key}' успешно загружена.")
+            logger.debug(f"Использование памяти после загрузки: {get_memory_usage()}")
+            return model
+        else:
+            raise ValueError(f"Неизвестный тип или имя модели: {model_key}")
+        
     def unload_model(self, model_key: str):
         """Выгружает модель по ее ключу и очищает память."""
         if model_key in self.models:

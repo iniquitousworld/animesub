@@ -8,6 +8,15 @@ def check_cancel(cancel_event):
     if cancel_event and cancel_event.is_set():
         raise InterruptedError("Отмена в vad_detector.py")
 
+
+def load_silero_vad(device): 
+    model, utils = torch.hub.load(
+    repo_or_dir="snakers4/silero-vad", model="silero_vad", force_reload=False,
+    trust_repo=True, onnx=False )
+
+    return {"model": model.to(device), "utils": utils}
+
+
 def detect_speech_segments(audio_path: str, model, utils, cancel_event=None):
     """
     Детектирует сегменты речи, принимая загруженную модель VAD (silero).

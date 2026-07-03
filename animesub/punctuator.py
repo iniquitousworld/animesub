@@ -29,6 +29,13 @@ def check_cancel(cancel_event):
     if cancel_event and cancel_event.is_set():
         raise InterruptedError("Отмена в punctuator.py")
 
+def load_punctuator():
+    from punctuators.models import PunctCapSegModelONNX
+    # Эта модель работает на CPU, нет смысла указывать device
+    model = PunctCapSegModelONNX.from_pretrained(
+        "1-800-BAD-CODE/xlm-roberta_punctuation_fullstop_truecase"
+    )
+    return model
 
 def _to_single_string(model_output) -> str:
     if isinstance(model_output, list):
